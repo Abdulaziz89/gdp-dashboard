@@ -1,151 +1,79 @@
 import streamlit as st
 import pandas as pd
-import math
-from pathlib import Path
+import plotly.graph_objects as go
 
-# Set the title and favicon that appear in the Browser's tab bar.
-st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
-)
+def calculate_mortgage(property_value, initial_pay_percent, interest_rate, loan_term):
+    down_payment = property_value * (initial_pay_percent / 100)
+    loan_amount = property_value - down_payment
+    monthly_rate = interest_rate / 100 / 12
+    number_of_payments = loan_term * 12
 
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
+    monthly_payment = (loan_amount * 
+                       (monthly_rate * (1 + monthly_rate) ** number_of_payments) / 
+                       ((1 + monthly_rate) ** number_of_payments - 1))
 
-@st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
+    schedule = []
+    balance = loan_amount
+    total_interest = 0
 
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
-    """
+    for month in range(1, int(number_of_payments) + 1):
+        interest_payment = balance * monthly_rate
+        principal_payment = monthly_payment - interest_payment
+        balance -= principal_payment
+        total_interest += interest_payment
 
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
+        if month <= 5 or month > number_of_payments - 5:
+            schedule.append({
+                'Month': month,
+                'Payment': monthly_payment,
+                'Principal': principal_payment,
+                'Interest': interest_payment,
+                'Remaining Balance': max(0, balance)
+            })
 
-    MIN_YEAR = 1960
-    MAX_YEAR = 2022
+    return monthly_payment, loan_amount, total_interest, schedule
 
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
-    )
+st.title('Saudi Mortgage Calculator')
 
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
+col1, col2 = st.columns(2)
 
-    return gdp_df
+with col1:
+    property_value = st.number_input('Property Value (SAR)', min_value=0.0, value=500000.0, step=10000.0)
+    initial_pay_percent = st.number_input('Initial Payment (%)', min_value=0.0, max_value=100.0, value=20.0, step=1.0)
 
-gdp_df = get_gdp_data()
+with col2:
+    interest_rate = st.number_input('Annual Interest Rate (%)', min_value=0.0, max_value=30.0, value=5.0, step=0.1)
+    loan_term = st.number_input('Loan Term (Years)', min_value=1, max_value=30, value=25, step=1)
 
-# -----------------------------------------------------------------------------
-# Draw the actual page
+if st.button('Calculate'):
+    monthly_payment, loan_amount, total_interest, schedule = calculate_mortgage(
+        property_value, initial_pay_percent, interest_rate, loan_term)
 
-# Set the title that appears at the top of the page.
-'''
-# :earth_americas: GDP dashboard
+    st.subheader('Results')
+    col1, col2, col3 = st.columns(3)
+    col1.metric('Loan Amount', f'{loan_amount:,.2f} SAR')
+    col2.metric('Monthly Payment', f'{monthly_payment:,.2f} SAR')
+    col3.metric('Total Interest', f'{total_interest:,.2f} SAR')
 
-Browse GDP data from the [World Bank Open Data](https://data.worldbank.org/) website. As you'll
-notice, the data only goes to 2022 right now, and datapoints for certain years are often missing.
-But it's otherwise a great (and did I mention _free_?) source of data.
-'''
+    # Payment Breakdown Pie Chart
+    fig = go.Figure(data=[go.Pie(
+        labels=['Principal', 'Total Interest'],
+        values=[loan_amount, total_interest],
+        hole=.3
+    )])
+    fig.update_layout(title='Payment Breakdown')
+    st.plotly_chart(fig)
 
-# Add some spacing
-''
-''
+    # Amortization Schedule
+    st.subheader('Amortization Schedule')
+    df = pd.DataFrame(schedule)
+    df = df.style.format({
+        'Payment': '{:,.2f}',
+        'Principal': '{:,.2f}',
+        'Interest': '{:,.2f}',
+        'Remaining Balance': '{:,.2f}'
+    })
+    st.dataframe(df)
 
-min_value = gdp_df['Year'].min()
-max_value = gdp_df['Year'].max()
-
-from_year, to_year = st.slider(
-    'Which years are you interested in?',
-    min_value=min_value,
-    max_value=max_value,
-    value=[min_value, max_value])
-
-countries = gdp_df['Country Code'].unique()
-
-if not len(countries):
-    st.warning("Select at least one country")
-
-selected_countries = st.multiselect(
-    'Which countries would you like to view?',
-    countries,
-    ['DEU', 'FRA', 'GBR', 'BRA', 'MEX', 'JPN'])
-
-''
-''
-''
-
-# Filter the data
-filtered_gdp_df = gdp_df[
-    (gdp_df['Country Code'].isin(selected_countries))
-    & (gdp_df['Year'] <= to_year)
-    & (from_year <= gdp_df['Year'])
-]
-
-st.header('GDP over time', divider='gray')
-
-''
-
-st.line_chart(
-    filtered_gdp_df,
-    x='Year',
-    y='GDP',
-    color='Country Code',
-)
-
-''
-''
-
-
-first_year = gdp_df[gdp_df['Year'] == from_year]
-last_year = gdp_df[gdp_df['Year'] == to_year]
-
-st.header(f'GDP in {to_year}', divider='gray')
-
-''
-
-cols = st.columns(4)
-
-for i, country in enumerate(selected_countries):
-    col = cols[i % len(cols)]
-
-    with col:
-        first_gdp = first_year[first_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-        last_gdp = last_year[last_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-
-        if math.isnan(first_gdp):
-            growth = 'n/a'
-            delta_color = 'off'
-        else:
-            growth = f'{last_gdp / first_gdp:,.2f}x'
-            delta_color = 'normal'
-
-        st.metric(
-            label=f'{country} GDP',
-            value=f'{last_gdp:,.0f}B',
-            delta=growth,
-            delta_color=delta_color
-        )
+    # Additional information
+    st.info(f"This schedule shows the first 5 and last 5 payments of your {loan_term}-year mortgage.")
